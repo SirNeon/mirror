@@ -42,7 +42,7 @@ class trdbot(object):
     def add_msg(self, msg=None, newline=False):
         """
         Simple function to make terminal output optional. Feed
-        it the message to print out. Can alsotell it to print a 
+        it the message to print out. Can also tell it to print a 
         newline if you want to.
         """
 
