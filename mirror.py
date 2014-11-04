@@ -1,13 +1,16 @@
 import logging
 import optparse
+import os
+from socket import timeout
 from sys import exit, stderr
 from time import sleep
 import praw
 from praw.errors import *
 from requests.exceptions import HTTPError
+from simpleconfigparser import simpleconfigparser
 
 
-class trdbot(object):
+class mirrorbot(object):
 
 
     def __init__(self):
@@ -15,28 +18,33 @@ class trdbot(object):
         Initialize the bot with some basic info.
         """
 
-        self.userAgent = "/r/TrueRedditDrama xposting bot by /u/SirNeon"
+        if(os.path.isfile("settings.cfg") == False):
+            print("Could not find settings.cfg. Exiting...")
+            exit(1)
+
+        self.config = simpleconfigparser()
+
+        self.config.read("settings.cfg")
+
+        self.userAgent = "xposting bot by /u/SirNeon"
 
         # add terminal output
-        self.verbose = False
+        self.verbose = self.config.main.getboolean("verbose")
 
         # list of subreddits to crawl
-        self.subredditList = set([
-                    "dickgirls",
-                ])
+        self.subredditList = set(self.config.main.subreddits.split(','))
 
+        # enable errorLogging
+        self.errorLogging = self.config.logging.getboolean("errorLogging")
 
         # list of threads already done
         self.alreadyDone = set()
 
-        # list of threads with the source linked
-        self.alreadyCommented = set()
-
         # post to this subreddit
-        self.post_to = "dyckgyrls"
+        self.post_to = self.config.main.post_to
 
         # scan no more than this number of threads
-        self.scrapeLimit = 1000
+        self.scrapeLimit = int(self.config.main.scrapeLimit)
 
 
     def add_msg(self, msg=None, newline=False):
@@ -48,10 +56,10 @@ class trdbot(object):
 
         if(self.verbose):
             if msg is not None:
-                print msg
+                print(msg)
 
             if(newline):
-                print '\n'
+                print('\n')
 
 
     def login(self, username, password):
@@ -61,10 +69,10 @@ class trdbot(object):
         """
 
         self.client = praw.Reddit(user_agent=self.userAgent)
-        print "Logging in as {0}...".format(username)
+        print("Logging in as {0}...".format(username))
 
         self.client.login(username, password)
-        print "Login was successful."
+        print("Login was successful.")
 
 
     def get_content(self, submission):
@@ -140,25 +148,25 @@ def login(username, password):
 
     for i in range(0, 3):
         try:
-            trdBot.login(username, password)
+            mirrorBot.login(username, password)
             break
 
         except (InvalidUser, InvalidUserPass, RateLimitExceeded, APIException) as e:
-            trdBot.add_msg(e)
-            logging.debug("Failed to login. " + str(e) + "\n\n")
+            mirrorBot.add_msg(e)
+            logging.error("Failed to login. " + str(e) + "\n\n")
             exit(1)
 
         except HTTPError, e:
-            trdBot.add_msg(e)
-            logging.debug(str(e) + "\n\n")
+            mirrorBot.add_msg(e)
+            logging.error(str(e) + "\n\n")
 
             if i == 2:
-                print "Failed to login."
+                print("Failed to login.")
                 exit(1)
 
             else:
                 # wait a minute and try again
-                trdBot.add_msg("Waiting to try again...")
+                mirrorBot.add_msg("Waiting to try again...")
                 sleep(60)
                 continue
 
@@ -174,51 +182,44 @@ def check_subreddits(subredditList):
     for i in range(0, 3):
         try:
             for subreddit in subredditList:
-                print "Verifying /r/{0}...".format(subreddit)
+                print("Verifying /r/{0}...".format(subreddit))
 
                 try:
                     # make sure the subreddit is valid
-                    testSubmission = trdBot.client.get_subreddit(subreddit).get_new(limit=1)
+                    testSubmission = mirrorBot.client.get_subreddit(subreddit).get_new(limit=1)
                     for submission in testSubmission:
                         "".join(submission.title)
 
                 except (InvalidSubreddit, RedirectException) as e:
-                    trdBot.add_msg(e)
-                    logging.debug("Invalid subreddit. Removing from list." + str(e) + "\n\n")
-                    trdBot.subredditList.remove(subreddit)
+                    mirrorBot.add_msg(e)
+                    logging.error("Invalid subreddit. Removing from list." + str(e) + "\n\n")
+                    mirrorBot.subredditList.remove(subreddit)
                     raise skipThis
 
-                except HTTPError, e:
-                    trdBot.add_msg(e)
-                    logging.debug(str(subreddit) + ' ' + str(e) + "\n\n")
+                except (HTTPError, timeout) as e:
+                    mirrorBot.add_msg(e)
+                    logging.error(str(subreddit) + ' ' + str(e) + "\n\n")
 
                     # private subreddits return a 403 error
                     if "403" in str(e):
-                        print "/r/{0} is private. Removing from list...".format(subreddit)
+                        print("/r/{0} is private. Removing from list...".format(subreddit))
                         subredditList.remove(subreddit)
                         continue
 
                     # banned subreddits return a 404 error
                     if "404" in str(e):
-                        print "/r/{0} probably banned. Removing from list...".format(subreddit)
-                        trdBot.subredditList.remove(subreddit)
+                        print("/r/{0} probably banned. Removing from list...".format(subreddit))
+                        mirrorBot.subredditList.remove(subreddit)
                         continue
 
-                    trdBot.add_msg("Waiting a minute to try again...")
+                    mirrorBot.add_msg("Waiting a minute to try again...")
                     sleep(60)
                     raise skipThis
 
                 except (APIException, ClientException, Exception) as e:
-                    trdBot.add_msg(e)
-                    logging.debug(str(e) + "\n\n")
-
-                    if str(e) == "timed out":
-                        trdBot.add_msg("Waiting to try again...")
-                        sleep(60)
-                        continue
-
-                    else:
-                        raise skipThis
+                    mirrorBot.add_msg(e)
+                    logging.error(str(e) + "\n\n")
+                    raise skipThis
 
             break
 
@@ -241,64 +242,27 @@ def check_list():
     list every so often so that it doesn't eat too much resources.
     """
     # keep the list from getting too big
-    if len(trdBot.alreadyDone) >= 1000:
+    if len(mirrorBot.alreadyDone) >= 1000:
         print "Trimming the list of finished submissions..."
         
-        for i, element in enumerate(trdBot.alreadyDone):
+        for i, element in enumerate(mirrorBot.alreadyDone):
             if i < 900:
-                trdBot.alreadyDone.remove(element)
+                mirrorBot.alreadyDone.remove(element)
 
 
 def main():
-    username = ""
-    password = ""
-
-    # optional commandline arguments and features
-    parser = optparse.OptionParser("python trdbot.py [options]")
-    parser.add_option("-p", "--postHere", dest="postHere", type="string", help="Set the subreddit to post the results to.")
-    parser.add_option("-v", "--verbosity", dest="verbosity", type="string", help="Make the program more verbose with status updates and error printing. Off by default.")
-    parser.add_option("-u", "--userCreds", dest="userCreds", type="string", help="Give the bot the username and password to an account. Separate them with commas.")
-    (options, args) = parser.parse_args()
-
-    if options.verbosity is not None:
-        if options.verbosity.lower() == "on":
-            trdBot.verbose = True
-
-        elif options.verbosity.lower() == "off":
-            trdBot.verbose = False
-
-        else:
-            print "Invalid argument for verbosity. Use either \"on\" or \"off\"."
-            exit(1)
-
-    if options.userCreds is not None:
-        credentials = options.userCreds.split(',')
-        username = credentials[0]
-        password = credentials[1]
+    username = mirrorBot.config.login.username
+    password = mirrorBot.config.login.password
 
     login(username, password)
 
-    # This requires the client attribute, which is created
-    # in the login function
-    if options.postHere is not None:
-        checkSub = [options.postHere]
-
-        check_subreddits(checkSub)
-
-        if checkSub == []:
-            print "Subreddit failed check. Can't post there."
-            exit(1)
-
-        else:
-            trdBot.post_to = options.postHere
-
-    check_subreddits(trdBot.subredditList)
+    check_subreddits(mirrorBot.subredditList)
 
     print "Building multireddit."
 
     multireddit = ""
 
-    for subreddit in trdBot.subredditList:
+    for subreddit in mirrorBot.subredditList:
         multireddit += "".join(subreddit + '+')
 
     print "Multireddit built."
@@ -308,17 +272,17 @@ def main():
 
         try:
             print "Scanning for submissions..."
-            submissions = trdBot.client.get_subreddit(multireddit).get_hot(limit=trdBot.scrapeLimit)
+            submissions = mirrorBot.client.get_subreddit(multireddit).get_hot(limit=mirrorBot.scrapeLimit)
 
         except (APIException, ClientException, HTTPError, Exception) as e:
-            trdBot.add_msg(e)
-            logging.debug(str(e) + "\n\n")
-            trdBot.add_msg("Waiting to try again...")
+            mirrorBot.add_msg(e)
+            logging.error(str(e) + "\n\n")
+            mirrorBot.add_msg("Waiting to try again...")
             sleep(60)
             continue
 
         for i, submission in enumerate(submissions):
-            trdBot.add_msg("Scanning thread ({0} / {1})...".format(i + 1, trdBot.scrapeLimit))
+            mirrorBot.add_msg("Scanning thread ({0} / {1})...".format(i + 1, mirrorBot.scrapeLimit))
 
             try:
                 postID = str(submission.id)
@@ -329,28 +293,29 @@ def main():
                 continue
 
             try:
-                if postID not in trdBot.alreadyDone:
-                    trdBot.add_msg("Getting content from submission...")
-                    result = trdBot.get_content(submission)
+                if postID not in mirrorBot.alreadyDone:
+                    mirrorBot.add_msg("Getting content from submission...")
+                    result = mirrorBot.get_content(submission)
 
                 else:
                     # needed to ease strain on CPU
                     sleep(2)
 
-            except HTTPError, e:
-                trdBot.add_msg(e)
-                logging.debug(str(e) + "\n\n")
+            except UnicodeEncodeError:
+                if postID not in mirrorBot.alreadyDone:
+                    mirrorBot.alreadyDone.add(postID)
+                
+                continue
+
+            except (HTTPError, timeout) as e:
+                mirrorBot.add_msg(e)
+                logging.error(str(e) + "\n\n")
                 sleep(60)
                 continue
 
             except (APIException, ClientException, Exception) as e:
-                trdBot.add_msg(e)
-                logging.debug(str(e) + "\n\n")
-
-                if str(e) == "timed out":
-                    trdBot.add_msg("Waiting to try again...")
-                    sleep(60)
-                        
+                mirrorBot.add_msg(e)
+                logging.error(str(e) + "\n\n")
                 continue
 
             try:
@@ -365,64 +330,56 @@ def main():
                     continue
 
             except Exception, e:
-                trdBot.add_msg(e)
-                logging.debug(str(e) + "\n\n")
+                mirrorBot.add_msg(e)
+                logging.error(str(e) + "\n\n")
                 continue
 
             # try to submit the post 3 times before skipping
             for i in range(0, 3):
                 try:
-                    if postID not in trdBot.alreadyDone:
+                    if postID not in mirrorBot.alreadyDone:
                         print "Submitting post..."
                         
                         content = content.replace("www.np.reddit.com", "np.reddit.com")
 
                         if(submission.is_self):
-                            post = trdBot.submit_selfpost(title, content)
+                            post = mirrorBot.submit_selfpost(title, content)
 
                         else:
-                            post = trdBot.submit_url(title, content)
+                            post = mirrorBot.submit_url(title, content)
 
-                        trdBot.alreadyDone.add(postID)
+                        mirrorBot.alreadyDone.add(postID)
 
                     else:
                         # needed to ease strain on CPU
                         sleep(2)
 
-                except HTTPError, e:
-                    trdBot.add_msg(e)
-                    logging.debug(str(e) + "\n\n")
+                except (HTTPError, timeout) as e:
+                    mirrorBot.add_msg(e)
+                    logging.error(str(e) + "\n\n")
                     sleep(60)
                     continue
 
                 except (APIException, ClientException, Exception) as e:
-                    trdBot.add_msg(e)
-                    logging.debug(str(e) + "\n\n")
+                    mirrorBot.add_msg(e)
+                    logging.error(str(e) + "\n\n")
 
                     if str(e) == "`that link has already been submitted` on field `url`":
-                        trdBot.alreadyDone.add(postID)
+                        mirrorBot.alreadyDone.add(postID)
                         break
-
-                    if str(e) == "timed out":
-                        trdBot.add_msg("Waiting to try again...")
-                        sleep(60)
                     
                     continue
 
 
 if __name__ == "__main__":
-    trdBot = trdbot()
+    mirrorBot = mirrorbot()
 
-    # set this to False to turn off error logging
-    # doing so is not recommended
-    errorLogging = True
-
-    if(errorLogging):
+    if(mirrorBot.errorLogging):
         logging.basicConfig(
-            filename="trdbot_logerr.log", filemode='a', 
+            filename="mirrorbot_logerr.log", filemode='a', 
             format="%(asctime)s\nIn %(filename)s "
             "(%(funcName)s:%(lineno)s): %(message)s", 
-            datefmt="%Y-%m-%d %H:%M:%S", level=logging.DEBUG, 
+            datefmt="%Y-%m-%d %H:%M:%S", level=logging.ERROR, 
             stream=stderr
             )
 
